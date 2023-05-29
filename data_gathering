@@ -1,0 +1,130 @@
+
+import os
+import json
+import requests
+import pandas as pd
+from datetime import datetime, timedelta
+
+def get_api_data(latitude, longitude, start_date, end_date):
+    """
+    Retrieves data from the API for the specified latitude, longitude, and date range.
+
+    Args:
+        latitude (float): Latitude of the location.
+        longitude (float): Longitude of the location.
+        start_date (str): Start date of the data range in YYYYMMDD format.
+        end_date (str): End date of the data range in YYYYMMDD format.
+
+    Returns:
+        dict: The API data containing various parameters for each date.
+    """
+    base_url = r"https://power.larc.nasa.gov/api/temporal/daily/point?parameters=ALLSKY_SFC_SW_DWN,PRECTOTCORR,RH2M,WS2M,T2M_MAX,T2M_MIN&community=AG&longitude={longitude}&latitude={latitude}&start={start}&end={end}&format=JSON"
+    api_request_url = base_url.format(longitude=longitude, latitude=latitude, start=start_date, end=end_date)
+    response = requests.get(url=api_request_url, timeout=30.0)  # Send a GET request to the API
+    content = json.loads(response.content.decode('utf-8'))  # Parse the response content as JSON
+    for keys in content['properties']['parameter'].keys():
+        # Transform the date keys in each parameter dictionary using the transform_date_keys function
+        content['properties']['parameter'][keys] = transform_date_keys(content['properties']['parameter'][keys])
+    return content['properties']['parameter']  # Return the parameter data from the API response
+
+
+def transform_date_keys(dictionary):
+    """
+    Transforms the keys of a dictionary from YYYYMMDD format to YYYY-MM-DD format.
+
+    Args:
+        dictionary (dict): The dictionary containing date keys in YYYYMMDD format.
+
+    Returns:
+        dict: The transformed dictionary with date keys in YYYY-MM-DD format.
+    """
+    transformed_dict = {}  # Create a new dictionary to store the transformed key-value pairs
+    for key, value in dictionary.items():
+        transformed_key = key[:4] + '-' + key[4:6] + '-' + key[6:]  # Transform the date key to YYYY-MM-DD format
+        transformed_dict[transformed_key] = value  # Add the transformed key-value pair to the new dictionary
+    return transformed_dict  # Return the transformed dictionary
+
+
+
+def get_data_for_locations(locations):
+    """
+    Retrieves data for the specified locations and date range.
+
+    Args:
+        locations (list): List of tuples containing latitude and longitude coordinates.
+
+    Returns:
+        pandas.DataFrame: DataFrame containing the retrieved data.
+    """
+    # Calculate the number of days 180 days ago
+    today = datetime.today()
+    date_180_days_ago = today - timedelta(days=180)
+    num_days = (today - date_180_days_ago).days
+
+    # Format the dates as strings in the format YYYYMMDD
+    start_date = date_180_days_ago.strftime('%Y%m%d')
+    end_date = today.strftime('%Y%m%d')
+
+    dfs = []  # list to hold dataframes
+
+    for latitude, longitude in locations:
+        parameters = get_api_data(latitude, longitude, start_date, end_date)
+
+        # Create a new dictionary with the data reshaped
+        reshaped_data = {
+            'date': [],
+            'ALLSKY_SFC_SW_DWN': [],
+            'PRECTOTCORR': [],
+            'RH2M': [],
+            'WS2M': [],
+            'T2M_MAX': [],
+            'T2M_MIN': []
+        }
+
+        # Iterate through each day in the date range
+        for date in pd.date_range(start=start_date, end=end_date, freq='D'):
+            date_str = date.strftime('%Y%m%d')
+            api_date_str = date.strftime('%Y-%m-%d')  # Date string in the API format
+            reshaped_data['date'].append(api_date_str)
+            reshaped_data['ALLSKY_SFC_SW_DWN'].append(parameters['ALLSKY_SFC_SW_DWN'][api_date_str])
+            reshaped_data['PRECTOTCORR'].append(parameters['PRECTOTCORR'][api_date_str])
+            reshaped_data['RH2M'].append(parameters['RH2M'][api_date_str])
+            reshaped_data['WS2M'].append(parameters['WS2M'][api_date_str])
+            reshaped_data['T2M_MAX'].append(parameters['T2M_MAX'][api_date_str])
+            reshaped_data['T2M_MIN'].append(parameters['T2M_MIN'][api_date_str])
+
+        # Create a DataFrame from the reshaped data and append it to the list
+        dfs.append(pd.DataFrame(reshaped_data))
+
+    # Concatenate all dataframes in the list
+    df = pd.concat(dfs, ignore_index=True)
+    return df
+
+
+
+
+
+import streamlit as st
+# (other imports go here)
+
+# (your functions go here)
+
+def main():
+    st.title('Weather Parameters Retrieval')
+
+    st.write('Enter the coordinates for which you want to retrieve the data (latitude and longitude):')
+    
+    # Input for latitude and longitude
+    latitude = st.number_input('Enter latitude:', value=6.8773)
+    longitude = st.number_input('Enter longitude:', value=-73.4723)
+    
+    if st.button('Retrieve data'):
+        st.write('Retrieving data...')
+        data = get_data_for_locations([(latitude, longitude)])
+
+        # Show the data in the app
+        st.write('Data retrieved:')
+        st.dataframe(data)
+
+if __name__ == '__main__':
+    main()
